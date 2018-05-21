@@ -34,7 +34,8 @@ class OverlayView(object):
 
 		self._cmap = plt.cm.nipy_spectral
 		self._cmap._init()
-		self._cmap._lut[:,-1] = np.linspace(0, 0.8, 255+4)
+		self._cmap._lut[0:30,-1] = np.linspace(0, 1, 30)
+		self._cmap._lut[30:,-1] = np.ones(225+4)#np.linspace(0, 1, 255+4)
 
 		self._timeStamp = timestamp
 		self._frameCount = 0
@@ -58,6 +59,11 @@ class OverlayView(object):
 		self._frameCount += 1
 		self.plot()
 
+	def drawGrid(self, color='k'):
+		xEdges, yEdges = self._grid.edges
+		self._ax.vlines(xEdges, 0, max(yEdges), linewidths=0.5, color=color)
+		self._ax.hlines(yEdges, 0, max(xEdges), linewidths=0.5, color=color)
+
 	def createColorBar(self):
 		self._fig.subplots_adjust(right=0.85)
 		self._cax = self._fig.add_axes([0.9, 0.15, 0.05, 0.7])
@@ -77,15 +83,15 @@ class OverlayView(object):
 		gridX, gridY = self._grid.mgrid
 
 		if weighted:
-			binFunc = lambda x,y: sum(binnedScores[(x,y)])
+			binFunc = lambda x,y: sum(binnedScores[self._grid.bin((x,y))]) / max(len(binnedScores[self._grid.bin((x,y))]), 1)
 		else:
-			binFunc = lambda x,y: len(binnedScores[(x,y)])
+			binFunc = lambda x,y: len(binnedScores[self._grid.bin((x,y))])
 
 		vecFunc = np.vectorize(binFunc)
 
 		values = vecFunc(gridX, gridY)
 
-		self._cb = self._ax.contourf(gridX, gridY, values, 15, cmap=self._cmap)
+		self._cb = self._ax.contourf(gridX, gridY, values, 25, cmap=self._cmap)
 		self._colorbar = plt.colorbar(self._cb, cax=self._cax)
 
 	def hist2d(self, measurements, weighted=True):
@@ -127,7 +133,7 @@ class OverlayView(object):
 		self._colorbar.draw_all()
 		self.plot()
 
-	def plotTracks(self, tracks, colors=None, labelled=False):
+	def plotTracks(self, tracks, colors=None, legend=None, labelled=False):
 		if self._imgToPlot is None:
 			print('Please provide image first')
 			return 
@@ -135,9 +141,14 @@ class OverlayView(object):
 		if colors is None:
 			colors = [(1.0, 0.0, 0.0)] * len(tracks)
 
+		lines = []
 		for track, color in zip(tracks, colors):
 			points = np.int32(np.asarray(track.positions).reshape(-1,2))
 			line = self._ax.plot(points[:,0], points[:,1], color=color, linewidth=1.0)
+			lines.append(line[0])
+
+		if legend is not None:
+			plt.legend(lines, legend)
 
 		if labelled:
 			for track, color in zip(tracks, colors):
@@ -205,6 +216,12 @@ class OverlayView(object):
 
 	def plot(self, pause=0.001):
 		self._fig.canvas.draw()
+		plt.tick_params(axis='both', which='both', bottom='off', top='off', labelbottom='off',
+						right='off', left='off', labelleft='off')
+
+		imgHeight, imgWidth = self._imgToPlot.shape[:2]
+		self._ax.set_xlim([0,imgWidth])
+		self._ax.set_ylim([0,imgHeight])
 		plt.show()
 		plt.pause(pause)
 
@@ -230,8 +247,10 @@ class FieldOverlayView(object):
 
 		self._fig = plt.figure(figsize=(10, 6), dpi=100)
 		self._ax = self._fig.add_subplot(111)
-		self._fig.subplots_adjust(right=0.85)
-		self._cax = self._fig.add_axes([0.9, 0.15, 0.05, 0.7])
+		self._ax.set_xticks([])
+		self._ax.set_yticks([])
+		self._fig.subplots_adjust(right=0.87)
+		self._cax = self._fig.add_axes([0.9, 0.16, 0.05, 0.67])
 
 		self._quiver = None
 		self._cb = None
@@ -265,7 +284,7 @@ class FieldOverlayView(object):
 		self._fig.canvas.draw()
 		plt.pause(0.1)
 
-	def drawField(self, field):
+	def drawField(self, field, mask=None):
 		self._cmap = plt.cm.nipy_spectral
 		self._cmap._init()
 
@@ -274,12 +293,23 @@ class FieldOverlayView(object):
 		xSamples, ySamples = field.sampleAtGrid(xGrid, yGrid)
 		magnitudes = np.sqrt(xSamples**2 + ySamples**2)
 
+		if mask is not None:
+			m = mask[yGrid.astype(int), xGrid.astype(int)]
+			xSamples = np.ma.masked_array(xSamples, mask=m)
+			ySamples = np.ma.masked_array(ySamples, mask=m)
+
 		self._clim = [magnitudes.min(), magnitudes.max()]
 
 		if (self._quiver is None):
 			self._quiver = self._ax.quiver(xGrid, yGrid, xSamples, ySamples, magnitudes,
+					clim=self._clim, cmap=plt.cm.nipy_spectral, angles='xy', scale_units='xy', scale=0.35)
+
+			"""
+			self._quiver = self._ax.quiver(xGrid, yGrid, xSamples, ySamples, magnitudes,
 					clim=self._clim, angles='xy', scale_units='xy', scale=1, cmap=plt.cm.nipy_spectral,
 					headwidth=2, headlength=4)
+			"""
+
 		else:
 			self._quiver.set_UVC(xSamples, ySamples, magnitudes)
 			self._quiver.changed()
@@ -296,6 +326,7 @@ class FieldOverlayView(object):
 			self._colorbar = self._fig.colorbar(self._quiver, ax=self._ax, cax=self._cax, cmap=plt.cm.nipy_spectral)
 
 		self._colorbar.set_clim(*self._clim)
+		#self._colorbar.set_label('px/s')
 		self._colorbar.draw_all()
 		self._fig.canvas.draw()
 		self.plot()
@@ -363,16 +394,15 @@ class FieldView(object):
 		else:
 			self._grid = grid
 
-		self._fig = plt.figure(figsize=(10, 6), dpi=300)
+		self._fig = plt.figure(figsize=(10, 6), dpi=100)
 		self._ax = self._fig.add_subplot(111)
-		self._fig.subplots_adjust(right=0.85)
-		self._cax = self._fig.add_axes([0.9, 0.15, 0.05, 0.7])
+		self._cax = None
 
 		self._quiver = None
 		self._cb = None
 		self._colorbar = None
 
-		self._cmap = plt.cm.jet
+		self._cmap = plt.cm.nipy_spectral
 
 		self._frameCount = 0
 		self._fig.set_size_inches(10, 6)
@@ -384,10 +414,18 @@ class FieldView(object):
 
 		self._cb = None
 
+	def clearPlot(self):
+		self._ax.clear()
+		self._quiver = None
+
 	def drawField(self):
 		if (self._field is None):
 			print("Error: Field not set")
 			return
+
+		if self._cax is None:
+			self._fig.subplots_adjust(right=0.85)
+			self._cax = self._fig.add_axes([0.9, 0.15, 0.05, 0.7])
 
 		xGrid, yGrid = self._grid.mgrid
 		xSamples, ySamples = self._field.sampleAtGrid(xGrid, yGrid)
@@ -397,7 +435,7 @@ class FieldView(object):
 
 		if (self._quiver is None):
 			self._quiver = self._ax.quiver(xGrid, yGrid, xSamples, ySamples, magnitudes,
-					clim=self._clim, angles='xy', scale_units='xy', scale=1, cmap=plt.cm.inferno)
+					clim=self._clim, angles='xy', scale_units='xy', scale=1, cmap=plt.cm.nipy_spectral)
 		else:
 			self._quiver.set_UVC(xSamples, ySamples, magnitudes)
 			self._quiver.changed()
@@ -411,7 +449,7 @@ class FieldView(object):
 		#self._ax.grid(which='both', alpha=1.0, linewidth=1)
 		#self._ax.tick_params(which='both', direction='out')
 		if self._colorbar is None:
-			self._colorbar = self._fig.colorbar(self._quiver, ax=self._ax, cax=self._cax, cmap=plt.cm.inferno)
+			self._colorbar = self._fig.colorbar(self._quiver, ax=self._ax, cax=self._cax, cmap=plt.cm.nipy_spectral)
 
 		self._colorbar.set_clim(*self._clim)
 		self._colorbar.draw_all()
@@ -431,8 +469,60 @@ class FieldView(object):
 		self._colorbar.draw_all()
 		self.plot()
 
+	def drawMeasurementLocations(self, measurements):
+		points = np.array([list(m.point) for m in measurements])
+		samples = self._ax.scatter(points[:,0], points[:,1], c='black', label='Sampling Locations')
+		self._ax.legend(loc='upper right')
+		self._ax.axis(self._field.plotExtents)
+		self.plot()
+
 	def drawMeasurementContours(self, measurements):
 		pass
+
+	def plotTracks(self, tracks, colors=None, legend=None, labelled=False):
+		if colors is None:
+			colors = [(0.0, 0.0, 0.0)] * len(tracks)
+		elif len(colors) == 1:
+			colors = colors * len(tracks)
+
+		lines = []
+		for track, color in zip(tracks, colors):
+			points = np.asarray(track.positions).reshape(-1,2)
+			line = self._ax.plot(points[:,0], points[:,1], color=color, linewidth=2.0)
+			lines.append(line[0])
+
+		if legend is not None:
+			plt.legend(lines, legend)
+
+		if labelled:
+			for track, color in zip(tracks, colors):
+				points = np.int32(np.asarray(track.positions).reshape(-1,2))
+				line = self._ax.plot(points[:,0], points[:,1], color=color, linewidth=1.0)
+				text = self._ax.annotate(f"{track.id}", xy=(points[-1,0], points[-1,1]), xytext=(0,0),
+									 textcoords='offset points', size=2, color='blue',
+									 horizontalalignment='center', verticalalignment='bottom')
+
+	def plotAnnotatedLine(self, x, y):
+		line = self._ax.plot(x, y, color='blue')
+		midX = (x[0] + x[1]) / 2.0
+		midY = (y[0] + y[1]) / 2.0
+
+		xDiff = x[1] - x[0]
+		yDiff = y[1] - y[0]
+
+		magnitude = np.linalg.norm([xDiff, yDiff])
+
+		text = self._ax.annotate(f"{magnitude:.2f}", xy=(np.max(x), np.max(y)), xytext=(0,-1.0),
+								 textcoords='offset points', size=6, color='blue',
+								 horizontalalignment='center', verticalalignment='bottom')
+
+		sp1 = self._ax.transData.transform_point((x[0], y[0]))
+		sp2 = self._ax.transData.transform_point((x[1], y[1]))
+
+		rise = (sp2[1] - sp1[1])
+		run = (sp2[0] - sp1[0])
+
+		slope_degrees = np.degrees(np.arctan2(rise, run))
 
 	def drawVariance(self, axis=0):
 		if (self._field is None):
